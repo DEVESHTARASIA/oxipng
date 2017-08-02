@@ -328,18 +328,69 @@ fn reduce_alpha_channel(png: &mut PngData, bpp_factor: usize) -> Option<Vec<u8>>
     let byte_depth: u8 = png.ihdr_data.bit_depth.as_u8() >> 3;
     let bpp: usize = bpp_factor * byte_depth as usize;
     let colored_bytes = bpp - byte_depth as usize;
+    let mut trns_pixel_terminating_bytes = Vec::new();
+    let mut overall_byte = 0;
     for line in png.scan_lines() {
         reduced.push(line.filter);
+        overall_byte += 1;
         for (i, byte) in line.data.iter().enumerate() {
             if i % bpp >= colored_bytes {
-                if *byte != 255 {
+                if *byte == 0 {
+                    trns_pixel_terminating_bytes.push(overall_byte);
+                } else if *byte != 255 {
                     return None;
                 }
             } else {
                 reduced.push(*byte);
             }
+            overall_byte += 1;
         }
     }
+
+    if !trns_pixel_terminating_bytes.is_empty() {
+        let mut trns_value: u64 = 0;
+        let mut success = false;
+        while !success {
+            success = true;
+            'png: for line in png.scan_lines() {
+                for pixel in line.data.windows(colored_bytes) {
+                    if pixel[(colored_bytes - byte_depth as usize)..colored_bytes]
+                        .iter()
+                        .any(|b| *b != 0)
+                    {
+                        let pixel_val = pixel
+                            .iter()
+                            .rev()
+                            .skip(byte_depth as usize)
+                            .enumerate()
+                            .map(|(i, byte)| (*byte as u64) << (i * 8))
+                            .sum();
+                        if trns_value == pixel_val {
+                            trns_value += 1;
+                            if trns_value > 0xff * colored_bytes as u64 * byte_depth as u64 {
+                                return None;
+                            }
+                            success = false;
+                            break 'png;
+                        }
+                    }
+                }
+            }
+        }
+        let trns_header = png.aux_headers.entry("tRNS".to_string()).or_insert_with(
+            Vec::new,
+        );
+        *trns_header = (0..(colored_bytes * 2))
+            .map(|i| if 2 == byte_depth || i % 2 == 1 {
+                (trns_value >>
+                     (8 * ((colored_bytes * byte_depth as usize) - (i * byte_depth as usize / 2)))) as
+                    u8
+            } else {
+                0
+            })
+            .collect();
+    }
+
     if let Some(sbit_header) = png.aux_headers.get_mut(&"sBIT".to_string()) {
         assert_eq!(sbit_header.len(), bpp_factor);
         sbit_header.pop();

@@ -270,7 +270,7 @@ fn issue_60() {
         &opts,
         ColorType::RGBA,
         BitDepth::Eight,
-        ColorType::GrayscaleAlpha,
-        BitDepth::Eight,
+        ColorType::Grayscale,
+        BitDepth::One,
     );
 }
